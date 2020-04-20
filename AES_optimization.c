@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
 #include <time.h>
 #include "aes.h"
@@ -15,6 +16,7 @@
 #define ShiftOneRow(a,b,c,d) { u32 t=a; a=b; b=c; c=d; d=t;}
 #define ShiftTwoRow(a,b,c,d) {ShiftOneRow(a,b,c,d); ShiftOneRow(a,b,c,d);}
 #define ShiftThreeRow(a,b,c,d) {ShiftTwoRow(a,b,c,d); ShiftOneRow(a,b,c,d);}
+
 u8 MULJH(u8 a, u8 b) {
 	u8 r = 0;
 	u8 index = 0x01;
@@ -396,11 +398,11 @@ void RoundkeyGeneration128_Optimazation(u8 MK[], u32 W[]) {
 	}
 }
 
-void AES_KeySchedule(u8 MK[], u32 W[], int keysize) {
+void AES_KeySchedule(u8 MK[], u8 RK[], int keysize) {
 
-	if (keysize == 128)RoundkeyGeneration128(MK, W);
-	//if (keysize==192)RoundkeyGeneration192(MK,W);
-	//if (keysize==256)RoundkeyGeneration256(MK,W);
+	if (keysize == 128)RoundkeyGeneration128(MK, RK);
+	//if (keysize==192)RoundkeyGeneration192(MK,RK);
+	//if (keysize==256)RoundkeyGeneration256(MK,RK);
 }
  
 void AES_KeySchedule_Optimization(u8 MK[], u32 W[], int keysize) {
@@ -539,23 +541,168 @@ void AES_DEC_Optimization(u8 CT[16], u32 InvW[], u8 DEC[16], int keysize) {
 
 }
 
-int main() {
+void ECB_Encryption(char* inputfile, char* outputfile, u32 W[]) {
+
+	FILE* rfp, * wfp;
+	u8* inputbuf, * outputbuf, r;
+	u32 DataLen;
+
+	rfp=fopen(inputfile, "rb");
+	if (rfp == NULL) {
+		perror("fopen_s Failed!\n");
+	}
+
+	fseek(rfp, 0, SEEK_END);
+	DataLen = ftell(rfp); //the size of inputfile(in bytes)
+	fseek(rfp, 0, SEEK_SET);
+
+	r = DataLen % 16;
+	r = 16 - r; //the number of bytes sould be PKCS #7 padded
+
+	inputbuf = calloc(DataLen + r, sizeof(u8));
+	outputbuf = calloc(DataLen + r, sizeof(u8));
+	fread(inputbuf, 1, DataLen, rfp);
+	fclose(rfp);
+	memset(inputbuf + DataLen, r, r);
+
+	for (int i = 0;i < (DataLen + r) / 16;i++) {
+		AES_ENC_Optimization(inputbuf + 16 * i, W, outputbuf + 16 * i, 128);
+	}
+
+	wfp=fopen(outputfile, "wb");
+	if (wfp == NULL) {
+		perror("fopen_s Failed!\n");
+	}
+	fwrite(outputbuf, 1, DataLen + r, wfp);
+	fclose(wfp);
+}
+
+void XOR16Bytes(u8 S[16], u8 RK[16]) { //S=S xor RK
+
+	S[0] ^= RK[0]; S[1] ^= RK[1]; S[2] ^= RK[2]; S[3] ^= RK[3];
+	S[4] ^= RK[4]; S[5] ^= RK[5]; S[6] ^= RK[6]; S[7] ^= RK[7];
+	S[8] ^= RK[8]; S[9] ^= RK[9]; S[10] ^= RK[10]; S[11] ^= RK[11];
+	S[12] ^= RK[12]; S[13] ^= RK[13]; S[14] ^= RK[14]; S[15] ^= RK[15];
+
+}
+
+void CBC_Encryption(char* inputfile, char* outputfile, u32 W[]) {
+
+	FILE* rfp, * wfp;
+	u8* inputbuf, * outputbuf, r;
+	u8 IV[16] = { 0x00, };
+	u32 DataLen;
+
+	rfp=fopen(inputfile, "rb");
+	if (rfp == NULL) {
+		perror("fopen_s Failed!\n");
+	}
+
+	fseek(rfp, 0, SEEK_END);
+	DataLen = ftell(rfp); //the size of inputfile(in bytes)
+	fseek(rfp, 0, SEEK_SET);
+
+	r = DataLen % 16;
+	r = 16 - r; //the number of bytes sould be PKCS #7 padded
+
+	inputbuf = calloc(DataLen + r, sizeof(u8));
+	outputbuf = calloc(DataLen + r, sizeof(u8));
+	fread(inputbuf, 1, DataLen, rfp);
+	fclose(rfp);
+	memset(inputbuf + DataLen, r, r);
+
+	XOR16Bytes(inputbuf, IV);
+	AES_ENC_Optimization(inputbuf, W, outputfile, 128);
+
+	for (int i = 1;i < (DataLen + r) / 16;i++) {
+		XOR16Bytes(inputbuf + 16 * i, outputbuf + 16 * (i - 1));
+		AES_ENC_Optimization(inputbuf + 16 * i, W, outputbuf + 16 * i, 128);
+	} 
+	
+	wfp=fopen(outputfile, "wb");
+	if (wfp == NULL) {
+		perror("fopen_s Failed!\n");
+	}
+	fwrite(outputbuf, 1, DataLen + r, wfp);
+	fclose(wfp);
+
+}
+
+void CBC_Decryption(char* inputfile, char* outputfile, u32 InvW[]) {
+
+	FILE* rfp, * wfp;
+	u8* inputbuf, * outputbuf, check;
+	u8 IV[16] = { 0x00, };
+	u32 DataLen;
+
+	rfp=fopen(inputfile, "rb");
+	if (rfp == NULL) {
+		perror("fopen_s Failed!\n");
+	}
+
+	fseek(rfp, 0, SEEK_END);
+	DataLen = ftell(rfp); //the size of inputfile(in bytes)
+	fseek(rfp, 0, SEEK_SET);
+
+	inputbuf = calloc(DataLen, sizeof(u8));
+	outputbuf = calloc(DataLen, sizeof(u8));
+	fread(inputbuf, 1, DataLen, rfp);
+	fclose(rfp);
+	
+	AES_DEC_Optimization(inputbuf, InvW, outputbuf, 128);
+	XOR16Bytes(outputbuf, IV);
+
+	for (int i = 1;i < DataLen / 16;i++) {
+		AES_DEC_Optimization(inputbuf + 16 * i, InvW, outputbuf + 16 * i, 128);
+		XOR16Bytes(outputbuf + 16 * i, inputbuf + 16 * (i - 1));
+	}
+
+	check = outputbuf[DataLen - 1];
+
+	wfp=fopen(outputfile, "wb");
+	if (wfp == NULL) {
+		perror("fopen_s Failed!\n");
+	}
+	fwrite(outputbuf, 1, DataLen - check, wfp);
+	fclose(wfp);
+
+}
+
+int main(int argc,char* argv[]) {
 
 	
 	u8 a, b, c, d;
 	int i;
 	u8 temp;
 	u8 PT[16] = { 0x00,0x11,0X22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff };
-	u8 MK[16] = { 0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f };
+	u8 MK[16] = { 0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c };
 	u8 CT[16] = { 0x00, };
 	u8 DEC[16] = { 0x00, };
 	u8 RK[240] = { 0x00, };
 	u32 W[60] = { 0x00, }; 
 	u32 InvW[60] = { 0x00, };
+	const char* ECB = "ecb";
 	clock_t start, finish;
 
 	int keysize = 128;
+
+	if (strcmp(argv[1], "ecb") == 0) {
+		printf("Passing Gate 2...\n");
+		AES_KeySchedule_Optimization(MK, W, keysize);
+		ECB_Encryption(argv[2], argv[3], W);
+	}
+	else if (strcmp(argv[1], "cbc") == 0) {
+		AES_KeySchedule_Optimization(MK, W, keysize);
+		CBC_Encryption(argv[2], argv[3], W);
+	}
 	
+	if (strcmp(argv[1], "cbcdec") == 0) {
+		AES_MixColmned_AddRoundKey_Inversed_Optimization(MK, InvW, keysize);
+		CBC_Decryption(argv[2], argv[3], InvW);
+	}
+
+	////////////////////////////////////////////////////////////////////////////////////////////
+
 	/*
 	AES_KeySchedule(MK, RK, keysize); // 1round:RK 0~15, 2round 16~31
 	start = clock();
@@ -567,6 +714,10 @@ int main() {
 	printf("Computation time : %f seconds\n", (double)(finish - start) / CLOCKS_PER_SEC);
 	printf("\n=================================\n\n");
 	*/
+	
+	////////////////////////////////////////////////////////////////////////////////////////////
+
+	/*
 	printf("AES PlainText:\n");
 	for (i = 0;i < 16;i++)printf("%02x ", PT[i]);
 	printf("\n\n");
@@ -595,6 +746,11 @@ int main() {
 	for (i = 0;i < 16;i++)printf("%02x ", DEC[i]);
 		
 	//MixColumned AddRoundKey Table (Inverse AES)
+	
+	*/
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////
+
 	/*
 	printf("u32 InvMixKey0[256] = {\n");
 	for(int i = 0;i < 256;i++) {
