@@ -1,9 +1,11 @@
-#Assume L is not empty
-#Assume 0<n<=len(L)
-#Sublists sould be without skipping elements in L
+'''
+Assume L is not empty
+Assume 0<n<=len(L)
+Sublists sould be without skipping elements in L
+'''
 
 def getSublists(L,n):
-    sublists=[] #sublists is list of lists so to use append() function, it must be declared as list at the front of definition
+    sublists=[] #sublists is list of lists, to use append() function, it must be declared as list at the front of definition
     for i in range(len(L)-n+1):#the number of sublists can be explained as the number of the possible last indexes in sublists which is n~Len(L)
         sublists.append(L[i:i+n])
     return sublists
